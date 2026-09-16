@@ -189,3 +189,7 @@ All repository documentation is maintained in English.
 - [Channel API and experimental framing](docs/channel-api.md)
 - [Raw TCP abstractions](docs/tcp-transport.md)
 - [Runnable sample source](samples/Stella.RosenBridge.SampleHost/Program.cs)
+
+## License
+
+Licensed under the [MIT License](LICENSE).

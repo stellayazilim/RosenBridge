@@ -8,10 +8,12 @@
     <RepositoryType>git</RepositoryType>
     <PackageProjectUrl>https://github.com/stellayazilim/RosenBridge</PackageProjectUrl>
     <PackageReadmeFile>README.md</PackageReadmeFile>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
     <PackageTags>tcp;streaming;rosenbridge</PackageTags>
     <PublishRepositoryUrl>true</PublishRepositoryUrl>
   </PropertyGroup>
   <ItemGroup>
     <None Include="$(MSBuildThisFileDirectory)../README.md" Pack="true" PackagePath="/" />
+    <None Include="$(MSBuildThisFileDirectory)../LICENSE" Pack="true" PackagePath="/" />
   </ItemGroup>
 </Project>
