@@ -201,3 +201,62 @@ dotnet run --project samples/Stella.RosenBridge.WebHost -- --smoke
 ```
 
 The smoke suite verifies application build/mapping validation, RunAsync cancellation, separate scopes, early duplex responses, normal HTTP and RB traffic on the same port, HTTPS certificate validation, session authentication, endpoint authorization, rejection handling, and cleanup of active connections during host shutdown.
+
+## Injecting an outgoing client
+
+The hosting packages can own a shared outgoing client independently of the server.
+Register `IRosenBridgeClient` once and inject it into application services. Registration
+and resolution do not open a connection; the first channel request connects asynchronously.
+
+For TCP/TLS, use `Stella.RosenBridge.Hosting`:
+
+```csharp
+builder.Services.AddRosenBridgeClient(options =>
+{
+    options.Endpoint = new Uri("rbs://localhost:7001");
+    options.Credential = credential;
+    options.OpenTimeout = TimeSpan.FromSeconds(5);
+});
+```
+
+For HTTP Upgrade, use `Stella.RosenBridge.Hosting.AspNetCore`. This registration works
+in both Generic Host and ASP.NET Core applications:
+
+```csharp
+builder.Services.AddRosenBridgeHttpClient(options =>
+{
+    options.Endpoint = new Uri("https://localhost:7001/rb");
+    options.Credential = credential;
+});
+```
+
+Application services receive the client without handling a connection factory:
+
+```csharp
+public sealed class EchoService(IRosenBridgeClient client)
+{
+    public async Task EchoAsync(ReadOnlyMemory<byte> input, Stream output, CancellationToken ct)
+    {
+        await using var channel = await client.RequestChannelAsync("/echo", ct);
+        channel.Send(input);
+        await channel.ReadPipe(output).WaitAsync(ct);
+    }
+}
+```
+
+Register the application service with the normal DI APIs. The client is a singleton;
+channels belong to individual operations and must be disposed by their callers.
+Do not dispose the injected client from application services. The host stops it and
+the container disposes it, including active channels. With a standalone ServiceProvider,
+dispose the provider to release the connection.
+
+Concurrent first requests share one connection attempt. Cancelling one caller stops
+only that caller's wait; host shutdown cancels the shared attempt. Failed initial
+connections may be retried by a later operation. An established but broken session
+is not automatically reconnected, and application operations are not replayed.
+The current registration supports one default client; duplicate registrations fail.
+
+The original `RosenBridgeFactory.ConnectAsync` and `ConnectOverHttpAsync` APIs remain
+available when explicit connection ownership is preferred. No synchronous blocking
+connection is performed in a DI factory. These registrations use no assembly scanning
+or reflection-based handler discovery.

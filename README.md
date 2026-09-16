@@ -193,3 +193,11 @@ All repository documentation is maintained in English.
 ## License
 
 Licensed under the [MIT License](LICENSE).
+
+### Outgoing client dependency injection
+
+Application services can inject `IRosenBridgeClient` directly. Register it with
+`services.AddRosenBridgeClient(options => ...)` for TCP/TLS or
+`services.AddRosenBridgeHttpClient(options => ...)` for HTTP Upgrade. The singleton
+connects lazily and asynchronously; the host/container owns its lifetime.
+See [outgoing client registration and examples](docs/hosting.md#injecting-an-outgoing-client).

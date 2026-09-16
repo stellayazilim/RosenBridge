@@ -3,6 +3,15 @@ using System.Net.Sockets;
 using Stella.RosenBridge.Transport;
 using Stella.RosenBridge.Transport.Tcp;
 
+if (args.Contains("--di-only"))
+{
+    await Run("DI client lazy session and lifetime", ClientDependencyInjectionTests.LifetimeAsync);
+    await Run("DI client pending shutdown", ClientDependencyInjectionTests.PendingShutdownAsync);
+    await Run("DI HTTP Upgrade", HostingSmokeTests.WebHostAsync);
+    await Run("DI HTTPS authentication", HostingSmokeTests.WebTlsAsync);
+    return;
+}
+
 ITransportFactory factory = new TcpTransportFactory();
 try
 {
@@ -27,6 +36,8 @@ try
     await Run("Client disposal closes owned channels", ClientServerSmokeTests.SessionDisposalAsync);
     await Run("Ticket replay and invalid bind isolation", ClientServerSmokeTests.TicketReplayAsync);
     await Run("Expired ticket releases reservation", ClientServerSmokeTests.TicketExpiryAsync);
+    await Run("DI client lazy shared session, cancellation, retry and shutdown", ClientDependencyInjectionTests.LifetimeAsync);
+    await Run("DI client disposal cancels pending connect", ClientDependencyInjectionTests.PendingShutdownAsync);
     await Run("Generic Host scopes and active shutdown", HostingSmokeTests.GenericHostAsync);
     await Run("RosenBridgeApp build, duplex streams, and RunAsync shutdown", HostingSmokeTests.RosenBridgeAppAsync);
     await Run("Application mapping lifecycle validation", HostingSmokeTests.MappingLifecycleAsync);

@@ -8,7 +8,7 @@ using Stella.RosenBridge.Transport;
 namespace Stella.RosenBridge;
 
 /// <summary>Owns one management session and its independently opened channels.</summary>
-public sealed class RosenBridgeClient : IAsyncDisposable
+public sealed class RosenBridgeClient : IRosenBridgeClient
 {
     private readonly RosenBridgeClientOptions _options;
     private readonly Func<CancellationToken, ValueTask<ITransportConnection>> _connect;

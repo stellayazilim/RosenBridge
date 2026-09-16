@@ -126,7 +126,14 @@ internal static class HostingSmokeTests
         using (var response = await http.GetAsync(endpoint, token))
             Check((int)response.StatusCode == 426, "Non-upgrade request must be rejected.");
 
-        await using var client = await new RosenBridgeFactory().ConnectOverHttpAsync(endpoint, LocalClient, token);
+        var clientServices = new ServiceCollection();
+        clientServices.AddRosenBridgeHttpClient(o =>
+        {
+            o.Endpoint = endpoint;
+            o.AllowInsecureLoopback = true;
+        });
+        await using var clientProvider = clientServices.BuildServiceProvider();
+        var client = clientProvider.GetRequiredService<IRosenBridgeClient>();
         await Task.WhenAll(EarlyEcho(client, token), EarlyEcho(client, token),
             http.GetStringAsync(new Uri(endpoint, "/health"), token));
         var tracker = app.Services.GetRequiredService<ScopeTracker>();
@@ -191,7 +198,15 @@ internal static class HostingSmokeTests
             CertificateValidation = (_, peer, _, _) => peer?.GetCertHashString() == certificate.GetCertHashString()
         };
         var factory = new RosenBridgeFactory();
-        await using var client = await factory.ConnectOverHttpAsync(endpoint, options, token);
+        var clientServices = new ServiceCollection();
+        clientServices.AddRosenBridgeHttpClient(o =>
+        {
+            o.Endpoint = endpoint;
+            o.Credential = options.Credential;
+            o.CertificateValidation = options.CertificateValidation;
+        });
+        await using var clientProvider = clientServices.BuildServiceProvider();
+        var client = clientProvider.GetRequiredService<IRosenBridgeClient>();
         await Task.WhenAll(EarlyEcho(client, token), EarlyEcho(client, token));
         Check(authentications == 1, "Channel upgrade repeated session authentication.");
         try
@@ -266,7 +281,7 @@ internal static class HostingSmokeTests
         return Task.CompletedTask;
     }
 
-    private static async Task EarlyEcho(RosenBridgeClient client, CancellationToken token)
+    private static async Task EarlyEcho(IRosenBridgeClient client, CancellationToken token)
     {
         await using var channel = await client.RequestChannelAsync("/echo", token);
         var first = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
