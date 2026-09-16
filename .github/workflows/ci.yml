@@ -1,0 +1,47 @@
+name: Build and smoke tests
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+  workflow_call:
+    inputs:
+      ref:
+        type: string
+        required: false
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+      - name: Restore
+        run: dotnet restore Stella.RosenBridge.slnx
+      - name: Build
+        run: dotnet build Stella.RosenBridge.slnx -c Release --no-restore
+      # This repository uses an executable smoke suite, not dotnet test discovery.
+      - name: Run smoke suite
+        run: dotnet run --project tests/Stella.RosenBridge.Transport.SmokeTests -c Release --no-build --no-restore
+      - name: Run standalone app sample
+        run: dotnet run --project samples/Stella.RosenBridge.GenericHost -c Release --no-build --no-restore -- --smoke
+      - name: Run web host sample
+        run: dotnet run --project samples/Stella.RosenBridge.WebHost -c Release --no-build --no-restore -- --smoke
+      - name: Verify package creation
+        shell: bash
+        run: |
+          for project in src/*/*.csproj; do
+            dotnet pack "$project" -c Release --no-build --no-restore -o artifacts/packages
+          done

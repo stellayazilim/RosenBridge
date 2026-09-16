@@ -1,0 +1,33 @@
+**/bin/
+**/obj/
+.idea/
+.vs/
+TestResults/
+BenchmarkDotNet.Artifacts/
+*.user
+*.suo
+
+# Build, package, and test outputs
+artifacts/
+*.nupkg
+*.snupkg
+.coverage/
+coverage/
+*.trx
+*.log
+
+# Local settings and credentials
+.env
+.env.*
+!.env.example
+appsettings.Local.json
+appsettings.*.Local.json
+*.pfx
+*.p12
+*.key
+*.pem
+
+# Editor and operating system files
+.vscode/
+.DS_Store
+Thumbs.db

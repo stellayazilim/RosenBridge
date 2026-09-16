@@ -1,0 +1,9 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../../src/Stella.RosenBridge.Hosting.AspNetCore/Stella.RosenBridge.Hosting.AspNetCore.csproj" />
+    <ProjectReference Include="../../src/Stella.RosenBridge/Stella.RosenBridge.csproj" />
+  </ItemGroup>
+</Project>

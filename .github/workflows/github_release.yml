@@ -1,0 +1,93 @@
+name: GitHub Packages release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Existing version tag, for example v0.0.1-e'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: github-packages-${{ inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  version:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      ref: ${{ steps.commit.outputs.sha }}
+    steps:
+      - name: Validate version tag
+        id: version
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+        run: |
+          if [[ ! "$RELEASE_TAG" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z]+(\.[0-9A-Za-z]+)*)?$ ]]; then
+            echo "Expected vMAJOR.MINOR.PATCH or vMAJOR.MINOR.PATCH-prerelease."
+            exit 1
+          fi
+          echo "version=${RELEASE_TAG#v}" >> "$GITHUB_OUTPUT"
+          echo "ref=refs/tags/$RELEASE_TAG" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.version.outputs.ref }}
+      - name: Pin the tested and published commit
+        id: commit
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+  verify:
+    needs: version
+    uses: ./.github/workflows/ci.yml
+    with:
+      ref: ${{ needs.version.outputs.ref }}
+
+  publish:
+    needs: [version, verify]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      packages: write
+    env:
+      RELEASE_VERSION: ${{ needs.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.version.outputs.ref }}
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+      - name: Build release version
+        run: dotnet build Stella.RosenBridge.slnx -c Release -p:Version="$RELEASE_VERSION" -p:ContinuousIntegrationBuild=true
+      - name: Pack libraries
+        shell: bash
+        run: |
+          for project in src/*/*.csproj; do
+            dotnet pack "$project" -c Release --no-build --no-restore -p:Version="$RELEASE_VERSION" -p:ContinuousIntegrationBuild=true -o artifacts/packages
+          done
+      - name: Publish only to GitHub Packages
+        shell: bash
+        env:
+          PACKAGE_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PACKAGE_OWNER: ${{ github.repository_owner }}
+        run: |
+          shopt -s nullglob
+          packages=(artifacts/packages/*.nupkg)
+          if [[ ${#packages[@]} -ne 3 ]]; then
+            echo "Expected exactly three RB library packages."
+            exit 1
+          fi
+          for package in "${packages[@]}"; do
+            dotnet nuget push "$package" \
+              --source "https://nuget.pkg.github.com/$PACKAGE_OWNER/index.json" \
+              --api-key "$PACKAGE_TOKEN" \
+              --skip-duplicate
+          done

@@ -1,0 +1,17 @@
+<Project>
+  <Import Project="../Directory.Build.props" />
+  <PropertyGroup>
+    <IsPackable>true</IsPackable>
+    <Authors>Stella Yazilim</Authors>
+    <Description>RosenBridge provides sessions, channels, and bidirectional streaming over TCP with .NET hosting integrations.</Description>
+    <RepositoryUrl>https://github.com/stellayazilim/RosenBridge</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <PackageProjectUrl>https://github.com/stellayazilim/RosenBridge</PackageProjectUrl>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <PackageTags>tcp;streaming;rosenbridge</PackageTags>
+    <PublishRepositoryUrl>true</PublishRepositoryUrl>
+  </PropertyGroup>
+  <ItemGroup>
+    <None Include="$(MSBuildThisFileDirectory)../README.md" Pack="true" PackagePath="/" />
+  </ItemGroup>
+</Project>

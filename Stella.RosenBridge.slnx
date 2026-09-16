@@ -1,0 +1,15 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/Stella.RosenBridge.Hosting/Stella.RosenBridge.Hosting.csproj" />
+    <Project Path="src/Stella.RosenBridge.Hosting.AspNetCore/Stella.RosenBridge.Hosting.AspNetCore.csproj" />
+    <Project Path="src/Stella.RosenBridge/Stella.RosenBridge.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/Stella.RosenBridge.Transport.SmokeTests/Stella.RosenBridge.Transport.SmokeTests.csproj" />
+  </Folder>
+  <Folder Name="/samples/">
+    <Project Path="samples/Stella.RosenBridge.GenericHost/Stella.RosenBridge.GenericHost.csproj" />
+    <Project Path="samples/Stella.RosenBridge.WebHost/Stella.RosenBridge.WebHost.csproj" />
+    <Project Path="samples/Stella.RosenBridge.SampleHost/Stella.RosenBridge.SampleHost.csproj" />
+  </Folder>
+</Solution>
