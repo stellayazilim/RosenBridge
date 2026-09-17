@@ -9,7 +9,7 @@ internal static class ClientDependencyInjectionTests
     internal static async Task LifetimeAsync(CancellationToken token)
     {
         await using var server = new RosenBridgeFactory().CreateServer(new Uri("rb://127.0.0.1:0"),
-            new() { AllowAnonymous = true, AllowInsecureLoopback = true });
+            new() { AllowInsecureLoopback = true });
         server.MapChannel("/echo", async (channel, ct) =>
         {
             channel.OnData((data, t) => channel.WriteAsync(data, t)).OnEnd(() => channel.CompleteWrites());

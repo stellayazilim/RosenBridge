@@ -30,6 +30,9 @@ try
     await Run("Manual write cancellation and disposal race", ChannelSmokeTests.CancelManualWriteAsync);
     await Run("Client/server concurrent channels and early response", ClientServerSmokeTests.ConcurrentChannelsAsync);
     await Run("Session authentication and TLS", ClientServerSmokeTests.TlsAsync);
+    await Run("Upper-layer admission, async endpoint policy, ticket invalidation and deadline", ClientServerSmokeTests.UpperLayerPolicyAsync);
+    await Run("Persistent state per master connection", ClientServerSmokeTests.PersistentSessionAsync);
+    await Run("Failed session initialization is isolated", ClientServerSmokeTests.SessionInitializationFailureAsync);
     await Run("Endpoint rejection preserves session", ClientServerSmokeTests.RejectionsAsync);
     await Run("Connection capacity is released", ClientServerSmokeTests.CapacityAsync);
     await Run("Cancelled acquisition preserves session", ClientServerSmokeTests.CancelAcquisitionAsync);

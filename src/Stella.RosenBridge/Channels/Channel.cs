@@ -60,6 +60,9 @@ public sealed class Channel : IAsyncDisposable
 
     public string Path { get; }
 
+    /// <summary>The shared server session; null for client-side and directly constructed channels.</summary>
+    public RosenBridgeSession? Session { get; internal set; }
+
     /// <summary>Completes after both payload directions and connection cleanup. Starts I/O.</summary>
     public Task Completion { get { Start(); return _completion.Task; } }
 

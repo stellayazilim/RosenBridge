@@ -13,8 +13,138 @@ using Stella.RosenBridge.Transport.Tcp;
 
 internal static class ClientServerSmokeTests
 {
+    internal static async Task PersistentSessionAsync(CancellationToken token)
+    {
+        int authentications = 0, initializations = 0;
+        var sessions = new System.Collections.Concurrent.ConcurrentDictionary<string, RosenBridgeSession>();
+        var originalUser = new ClaimsPrincipal(new ClaimsIdentity(new[] { new Claim(ClaimTypes.Name, "alice") }, "test"));
+        var factory = new RosenBridgeFactory();
+        await using var server = factory.CreateServer(new Uri("rb://127.0.0.1:0"), new()
+        {
+            AllowInsecureLoopback = true,
+            AcceptSessionAsync = (session, credential, _) =>
+            {
+                Interlocked.Increment(ref authentications);
+                if (credential != "secret") return ValueTask.FromResult(false);
+                session.Items["user"] = originalUser;
+                Interlocked.Increment(ref initializations);
+                session.Items["requests"] = 0;
+                sessions.TryAdd(session.Id, session);
+                return ValueTask.FromResult(true);
+            },
+            AuthorizeChannelAsync = (session, _, _) => ValueTask.FromResult(((ClaimsPrincipal)session.Items["user"]!).Identity?.Name == "alice")
+        }).MapChannel("/echo", async (channel, ct) =>
+        {
+            var session = channel.Session ?? throw new Exception("Session context missing.");
+            Check(ReferenceEquals(session, sessions[session.Id]), "Channel received a copy of session state.");
+            Check(ReferenceEquals(session.Items["user"], originalUser), "Upper-layer context was changed by transport.");
+            session.Items.AddOrUpdate("requests", 1, (_, count) => (int)count! + 1);
+            await EchoAsync(channel, ct);
+        });
+        await server.StartAsync(token);
+        var options = new RosenBridgeClientOptions { AllowInsecureLoopback = true, Credential = "secret" };
+        await using var first = await factory.ConnectAsync(Address(server), options, token);
+        await using var second = await factory.ConnectAsync(Address(server), options, token);
+        await Task.WhenAll(Enumerable.Range(0, 4).Select(_ => RoundTripAsync(first, token)));
+        await RoundTripAsync(second, token);
+        Check(authentications == 2 && initializations == 2, "Authentication or initialization repeated per transfer.");
+        var firstState = sessions[first.SessionId];
+        var secondState = sessions[second.SessionId];
+        Check(!ReferenceEquals(firstState, secondState), "Different master connections shared state.");
+        Check((int)firstState.Items["requests"]! == 4 && (int)secondState.Items["requests"]! == 1,
+            "Session counters crossed connection boundaries.");
+        await first.DisposeAsync();
+        while (!firstState.Closed.IsCancellationRequested) await Task.Delay(5, token);
+        Check(!secondState.Closed.IsCancellationRequested, "Closing one session closed another.");
+        await RoundTripAsync(second, token);
+        await using var active = await second.RequestChannelAsync("/echo", token);
+        active.OnData((_, _) => ValueTask.CompletedTask);
+        secondState.Close();
+        secondState.Close();
+        Check(secondState.Closed.IsCancellationRequested, "Upper-layer close did not close session state.");
+        try { await active.Completion.WaitAsync(token); throw new Exception("Upper-layer close left channel active."); }
+        catch (IOException) { }
+        catch (OperationCanceledException) when (!token.IsCancellationRequested) { }
+    }
+
+    internal static async Task SessionInitializationFailureAsync(CancellationToken token)
+    {
+        int attempts = 0;
+        RosenBridgeSession? failedSession = null;
+        var factory = new RosenBridgeFactory();
+        await using var server = Server(factory, LocalServer with
+        {
+            AcceptSessionAsync = (session, _, _) =>
+            {
+                if (Interlocked.Increment(ref attempts) == 1)
+                {
+                    failedSession = session;
+                    throw new InvalidOperationException("Expected initialization failure.");
+                }
+                return ValueTask.FromResult(true);
+            }
+        });
+        await server.StartAsync(token);
+        try
+        {
+            await using var unexpected = await factory.ConnectAsync(Address(server), LocalClient, token);
+            throw new Exception("Failed session initialization returned a ready client.");
+        }
+        catch (IOException) { }
+        Check(failedSession?.Closed.IsCancellationRequested == true, "Failed initialization leaked a live session.");
+        await using var client = await factory.ConnectAsync(Address(server), LocalClient, token);
+        await RoundTripAsync(client, token);
+    }
+
+    internal static async Task UpperLayerPolicyAsync(CancellationToken token)
+    {
+        RosenBridgeSession? accepted = null;
+        var calls = 0;
+        var factory = new RosenBridgeFactory();
+        await using var server = Server(factory, LocalServer with
+        {
+            AcceptSessionAsync = async (session, credential, ct) =>
+            {
+                await Task.Delay(5, ct);
+                accepted = session;
+                return credential == "opaque-application-value";
+            },
+            AuthorizeChannelAsync = async (_, path, ct) =>
+            {
+                await Task.Delay(5, ct);
+                Interlocked.Increment(ref calls);
+                return path == "/echo";
+            }
+        });
+        await server.StartAsync(token);
+        var tcp = new TcpTransportFactory();
+        await using var control = await tcp.ConnectAsync(server.LocalEndPoint, token);
+        var ready = await ExchangeAsync(control, new { type = "control", credential = "opaque-application-value" }, token);
+        var sessionId = ready.GetProperty("session").GetString();
+        var grant = await ExchangeAsync(control, new { type = "open", id = 1, path = "/echo" }, token);
+        var ticket = grant.GetProperty("ticket").GetString();
+        Check(calls == 1, "Endpoint policy not awaited before ticket grant.");
+        accepted!.Close();
+        await using var data = await tcp.ConnectAsync(server.LocalEndPoint, token);
+        var denied = await ExchangeAsync(data, new { type = "bind", id = 1, session = sessionId, ticket }, token);
+        Check(denied.GetProperty("code").GetString() == "invalid-ticket", "Closed session ticket accepted.");
+
+        // Even a non-cooperative policy cannot hold a handshake open indefinitely.
+        await using var timeoutServer = Server(factory, LocalServer with
+        {
+            HandshakeTimeout = TimeSpan.FromMilliseconds(100),
+            AcceptSessionAsync = (_, _, _) => new ValueTask<bool>(new TaskCompletionSource<bool>().Task)
+        });
+        await timeoutServer.StartAsync(token);
+        try
+        {
+            await using var unexpected = await factory.ConnectAsync(Address(timeoutServer), LocalClient, token);
+            throw new Exception("Uncompleted acceptance callback returned a ready client.");
+        }
+        catch (IOException) { }
+    }
     private static RosenBridgeClientOptions LocalClient => new() { AllowInsecureLoopback = true };
-    private static RosenBridgeServerOptions LocalServer => new() { AllowInsecureLoopback = true, AllowAnonymous = true };
+    private static RosenBridgeServerOptions LocalServer => new() { AllowInsecureLoopback = true };
 
     private static RosenBridgeServer Server(RosenBridgeFactory factory, RosenBridgeServerOptions? options = null)
         => factory.CreateServer(new Uri("rb://127.0.0.1:0"), options ?? LocalServer).MapChannel("/echo", EchoAsync);
@@ -80,11 +210,10 @@ internal static class ClientServerSmokeTests
         await using var server = factory.CreateServer(new Uri("rbs://127.0.0.1:0"), new()
         {
             Certificate = certificate,
-            AuthenticateAsync = (credential, _) =>
+            AcceptSessionAsync = (session, credential, _) =>
             {
                 Interlocked.Increment(ref authentications);
-                return ValueTask.FromResult<ClaimsPrincipal?>(credential == "test-credential"
-                    ? new ClaimsPrincipal(new ClaimsIdentity("test")) : null);
+                return ValueTask.FromResult(credential == "test-credential");
             }
         }).MapChannel("/echo", EchoAsync);
         await server.StartAsync(token);
@@ -121,7 +250,7 @@ internal static class ClientServerSmokeTests
     internal static async Task RejectionsAsync(CancellationToken token)
     {
         var factory = new RosenBridgeFactory();
-        await using var server = Server(factory, LocalServer with { AuthorizeChannel = (_, path) => path != "/denied" })
+        await using var server = Server(factory, LocalServer with { AuthorizeChannelAsync = (_, path, _) => ValueTask.FromResult(path != "/denied") })
             .MapChannel("/denied", EchoAsync);
         await server.StartAsync(token);
         await using var client = await factory.ConnectAsync(Address(server), LocalClient, token);

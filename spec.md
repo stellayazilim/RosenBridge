@@ -8,13 +8,13 @@ This document describes the current architectural decisions. The previous one-so
 
 RosenBridge provides session, channel, connection, and request/response stream APIs over the platform's TCP facilities. It does not require a broker, persistent queue, or routing service.
 
-- **Session:** The lifetime of an authenticated management connection and its operations.
+- **Session:** The lifetime of an accepted management connection and its operations.
 - **Channel:** A logical endpoint such as `/files`, representing an address, handler, and access/resource policy. It is not a TCP socket.
 - **Connection:** A physical TCP/TLS data connection routed to a channel. Each connection is dedicated to one complete request/response operation.
 - **Request / response:** Two payload streams flowing in opposite directions on the same connection. They can progress concurrently.
 
 ```text
-Session — authenticated management connection
+Session — accepted management connection
 ├─ Channel /files
 │  ├─ Connection A → request A ⇄ response A
 │  ├─ Connection B → request B ⇄ response B
@@ -31,7 +31,7 @@ A second request/response is not started on the same connection; the socket is n
 
 The transport standard is [TCP — RFC 9293](https://www.rfc-editor.org/rfc/rfc9293.html). Connection establishment, segmentation, ordering, retransmission, TCP ACK/window, and congestion control are delegated to the platform. RosenBridge uses the language/runtime's TCP connect, accept, read, write, and close facilities. TLS uses a standard TLS implementation.
 
-TCP is a byte stream; read/write boundaries are not message boundaries. RosenBridge handles authentication, endpoint selection, binding connections to sessions, request/response start and end, cancellation, and application resource limits.
+TCP is a byte stream; read/write boundaries are not message boundaries. RosenBridge delegates session acceptance to the upper layer and handles endpoint selection, binding connections to sessions, request/response start and end, cancellation, and application resource limits.
 
 ## 2. Addressing and endpoint lifetime
 
@@ -53,26 +53,26 @@ rb://127.0.0.1:5500
 - Empty segments, trailing slashes, `.`, and `..` are rejected. Validation precedes silent normalization by the URI library. A decoded path is at most 1024 UTF-8 bytes.
 - The path in a management message is a decoded string; the server does not percent-decode it again.
 
-Queries use UTF-8 percent-encoding; `+` is not a space. Duplicate, unknown, or options-conflicting parameters are rejected. Draft options: auth (`none`, `sasl`, `oidc`), authority, client_id, scope, redirect_uri. They are not part of channel identity. A credential provider supplies tokens/passwords/secrets; credentials are not placed in the URI. Authority is validated against trusted HTTPS issuer configuration.
+Credentials and authentication configuration are not URI parameters. The implementation rejects queries. Credentials are supplied separately through client options.
 
 The server owns channel registration/handlers; a channel handle within a session represents access to that endpoint. Closing a session does not remove the server's endpoint registration for other sessions. Disabling an endpoint rejects new requests; existing connections complete or are cancelled according to the configured drain policy.
 
 ## 3. Management connection and authentication
 
 ```text
-Platform TCP connection → [TLS] → application role/version → authentication → session ready
+Platform TCP connection → [TLS] → application role/version → optional upper-layer acceptance → session ready
 ```
 
 The platform performs the TCP handshake. Management/data role selection on a shared listener and session identity are application-startup information. Their encoding has not yet been finalized.
 
-The user authenticates on the management connection. No data-connection reservation is granted before the session is ready. The management connection carries endpoint requests, capacity management, tickets, cancellation, and session closure; it does not carry payloads.
+The upper layer optionally validates the credential on the management connection. RB does not define user authentication schemes or identity types. No data-connection reservation is granted before the session is ready. The management connection carries endpoint requests, capacity management, tickets, cancellation, and session closure; it does not carry payloads.
 
 A data connection does not initiate another user login; it binds to the existing session with a single-use ticket. Each new physical connection still performs the required TLS setup.
 
 ## 4. Opening an operation connection to a channel
 
-1. The client requests a new request/response connection for a channel path over the authenticated management connection.
-2. The server checks the endpoint, session identity, path authorization, and capacity.
+1. The client requests a new request/response connection for a channel path over the accepted management connection.
+2. The server checks the registered endpoint, accepted session, optional asynchronous upper-layer endpoint policy, and capacity.
 3. If capacity is available, it reserves a connection and returns a reservation/connection identity and single-use ticket over the management connection.
 4. The client opens a new TCP/TLS connection to the same server and presents the ticket.
 5. The server verifies that the ticket matches the active session, endpoint, and reservation, then consumes it atomically.
@@ -166,19 +166,13 @@ Read/write buffers for each operation connection are bounded; memory is not rese
 - If needed, rate limiting is an application policy at connection/channel/session level; TCP congestion control is not reimplemented.
 - Cancellation terminates the waiting entry, reservation, or active operation connection. Cleanup is idempotent; slots/buffers are released exactly once.
 - A lost data socket affects only its request/response operation. The session and other connections to the same channel are unaffected.
-- Control-connection loss or authentication expiry terminates all operation connections and reservations for that session.
+- Control-connection loss or an upper-layer session close terminates all operation connections and reservations for that session.
 
 ## 9. Security
 
 Rbs uses TLS 1.2 or later; TLS 1.3 is preferred. The certificate chain and hostname are validated. Data sockets use the same server identity/validation policy as the control socket. Authentication, tickets, and application data are not sent as TLS early data.
 
-The SASL service name is rosenbridge. The control hello advertises permitted mechanisms; the client selects a shared mechanism according to its own policy. The auth-start/challenge/response/auth-ok exchange is used. Mechanism bytes are standard Base64 JSON strings; null means no initial response, while an empty string means zero bytes. At most 16 challenge rounds and 30 seconds are allowed. The client validates final server data. No common mechanism is an error; there is no automatic downgrade to a weaker mechanism.
-
-SCRAM-SHA-256, OAUTHBEARER, and EXTERNAL providers can be plugged in. TLS provides protection instead of an additional SASL security layer. EXTERNAL may bind to an mTLS identity. Mechanism formats follow their respective standards.
-
-OIDC/OAuth sign-in and token acquisition run over HTTPS in the client integration. The PKCE S256 verifier remains local, the challenge goes in the authorization URL, and the verifier goes to the token endpoint. State and applicable OIDC validations are enforced. User interaction finishes before the connection/application-startup deadline. The access token is presented to RB using OAUTHBEARER. Refresh tokens are not transferred.
-
-The server validates trusted issuer, audience, validity period, and JWT signature/introspection. Session identity applies to all channels, with additional access control per path. The session closes when expiresAt is reached. Tokens, tickets, and authentication bodies are excluded from default logs.
+Authentication schemes, token acquisition/validation, refresh and identity expiry belong to the upper layer. RB forwards an opaque credential in the first management envelope over TCP/TLS, or in the initial Authorization header over HTTP Upgrade. Data connections use only tickets. The upper layer may store identity in session Items and close the session on expiry or revocation. RB never places credentials in URLs. Tokens, tickets and credential bodies must be excluded from logs.
 
 ## 10. Timeouts, closure, and API direction
 

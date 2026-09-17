@@ -21,10 +21,17 @@ public static class RosenBridgeHttpClientExtensions
             throw new ArgumentException("Use an HTTP(S) endpoint without credentials, query, or fragment.", nameof(endpoint));
         if (endpoint.Scheme == "http" && !options.AllowInsecureLoopback)
             throw new ArgumentException("HTTP requires explicit AllowInsecureLoopback.", nameof(options));
-        return factory.ConnectUsingAsync(ct => UpgradeAsync(endpoint, options, ct), options, cancellationToken);
+        var wireOptions = new RosenBridgeClientOptions
+        {
+            OpenTimeout = options.OpenTimeout, MaxPendingRequests = options.MaxPendingRequests,
+            AllowInsecureLoopback = options.AllowInsecureLoopback, CertificateValidation = options.CertificateValidation
+        };
+        return factory.ConnectUsingAsync(
+            ct => UpgradeAsync(endpoint, options, options.Credential, ct),
+            ct => UpgradeAsync(endpoint, options, null, ct), wireOptions, cancellationToken);
     }
 
-    private static async ValueTask<ITransportConnection> UpgradeAsync(Uri endpoint, RosenBridgeClientOptions options, CancellationToken token)
+    private static async ValueTask<ITransportConnection> UpgradeAsync(Uri endpoint, RosenBridgeClientOptions options, string? credential, CancellationToken token)
     {
         ITransportConnection? raw = null;
         var handler = new SocketsHttpHandler
@@ -65,6 +72,7 @@ public static class RosenBridgeHttpClientExtensions
                 Version = HttpVersion.Version11,
                 VersionPolicy = HttpVersionPolicy.RequestVersionExact
             };
+            if (credential is not null) request.Headers.Add("Authorization", credential);
             request.Headers.Connection.Add("Upgrade");
             request.Headers.Upgrade.Add(new ProductHeaderValue(RosenBridgeEndpointExtensions.UpgradeProtocol));
             response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, token).ConfigureAwait(false);

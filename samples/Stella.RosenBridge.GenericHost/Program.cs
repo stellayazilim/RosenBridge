@@ -9,7 +9,6 @@ var builder = RosenBridgeApp.CreateBuilder(args.Where(arg => arg != "--smoke").T
 builder.Services
     .AddRosenBridge(options => options.Server = new()
     {
-        AllowAnonymous = true,
         AllowInsecureLoopback = true
     })
     .UseTcp(new Uri(smoke ? "rb://127.0.0.1:0" : "rb://127.0.0.1:7000"));

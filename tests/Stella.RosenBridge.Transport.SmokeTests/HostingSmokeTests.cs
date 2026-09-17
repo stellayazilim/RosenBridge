@@ -17,7 +17,7 @@ using Stella.RosenBridge.Hosting.AspNetCore;
 
 internal static class HostingSmokeTests
 {
-    private static RosenBridgeServerOptions LocalServer => new() { AllowAnonymous = true, AllowInsecureLoopback = true };
+    private static RosenBridgeServerOptions LocalServer => new() { AllowInsecureLoopback = true };
     private static RosenBridgeClientOptions LocalClient => new() { AllowInsecureLoopback = true };
 
     internal static async Task RosenBridgeAppAsync(CancellationToken token)
@@ -179,22 +179,27 @@ internal static class HostingSmokeTests
         int authentications = 0;
         builder.Services.AddRosenBridge(o => o.Server = new()
         {
-            AuthenticateAsync = (credential, _) =>
+            AcceptSessionAsync = (session, credential, _) =>
             {
                 Interlocked.Increment(ref authentications);
-                return ValueTask.FromResult<ClaimsPrincipal?>(credential == "secret"
-                    ? new ClaimsPrincipal(new ClaimsIdentity("test")) : null);
+                return ValueTask.FromResult(credential == "Bearer secret" || credential == "Basic dXNlcjpwYXNz");
             },
-            AuthorizeChannel = (_, path) => path != "/denied"
+            AuthorizeChannelAsync = async (_, path, ct) => { await Task.Delay(5, ct); return path != "/denied"; }
         });
         await using var app = builder.Build();
+        var headers = new ConcurrentQueue<string>();
+        app.Use(async (context, next) =>
+        {
+            headers.Enqueue(context.Request.Headers.Authorization.ToString());
+            await next();
+        });
         app.MapChannel("/echo", Echo).MapChannel("/denied", Echo);
         app.MapRosenBridge();
         await app.StartAsync(token);
         var endpoint = new Uri(app.Urls.Single() + "/rb");
         var options = new RosenBridgeClientOptions
         {
-            Credential = "secret",
+            Credential = "Bearer secret",
             CertificateValidation = (_, peer, _, _) => peer?.GetCertHashString() == certificate.GetCertHashString()
         };
         var factory = new RosenBridgeFactory();
@@ -208,7 +213,13 @@ internal static class HostingSmokeTests
         await using var clientProvider = clientServices.BuildServiceProvider();
         var client = clientProvider.GetRequiredService<IRosenBridgeClient>();
         await Task.WhenAll(EarlyEcho(client, token), EarlyEcho(client, token));
-        Check(authentications == 1, "Channel upgrade repeated session authentication.");
+        Check(authentications == 1, "Channel upgrade repeated session acceptance.");
+        Check(headers.Count(h => h == "Bearer secret") == 1 && headers.Count(h => h.Length == 0) == 2,
+            "Credential must be sent only on the management upgrade.");
+        await using (var basic = await factory.ConnectOverHttpAsync(endpoint,
+            new() { Credential = "Basic dXNlcjpwYXNz", CertificateValidation = options.CertificateValidation }, token))
+            await EarlyEcho(basic, token);
+        Check(headers.Count(h => h == "Basic dXNlcjpwYXNz") == 1, "Basic credential repeated on data connection.");
         try
         {
             await using var denied = await client.RequestChannelAsync("/denied", token);
@@ -236,7 +247,7 @@ internal static class HostingSmokeTests
     internal static async Task WebSecurityPolicyAsync(CancellationToken token)
     {
         var builder = WebBuilder();
-        builder.Services.AddRosenBridge(o => o.Server = new() { AllowAnonymous = true });
+        builder.Services.AddRosenBridge(o => o.Server = new());
         await using var app = builder.Build();
         app.MapChannel("/echo", Echo);
         app.MapRosenBridge();

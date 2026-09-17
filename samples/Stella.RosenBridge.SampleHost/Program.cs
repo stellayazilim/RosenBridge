@@ -10,7 +10,6 @@ try
     await using var server = factory.CreateServer(new Uri("rb://127.0.0.1:0"), new()
     {
         AllowInsecureLoopback = true,
-        AllowAnonymous = true
     });
 
     server.MapChannel("/echo", async (channel, ct) =>

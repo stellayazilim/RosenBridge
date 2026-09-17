@@ -4,6 +4,6 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <IsPackable>false</IsPackable>
-    <Version>0.0.2-e</Version>
+    <Version>0.0.3-e</Version>
   </PropertyGroup>
 </Project>

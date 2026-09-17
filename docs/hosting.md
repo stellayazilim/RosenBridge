@@ -19,7 +19,6 @@ using Stella.RosenBridge.Hosting;
 var builder = RosenBridgeApp.CreateBuilder(args);
 builder.Options.Server = new()
 {
-    AllowAnonymous = true,
     AllowInsecureLoopback = true
 };
 builder.UseTcp(new Uri("rb://127.0.0.1:7000"));
@@ -50,7 +49,6 @@ var builder = Host.CreateApplicationBuilder(args);
 builder.Services
     .AddRosenBridge(options => options.Server = new()
     {
-        AllowAnonymous = true,
         AllowInsecureLoopback = true
     })
     .UseTcp(new Uri("rb://127.0.0.1:7000"));
@@ -68,7 +66,7 @@ host.MapChannel("/echo", async (channel, ct) =>
 await host.RunAsync();
 ```
 
-These options explicitly enable anonymous, cleartext loopback development. For secure TCP, select `rbs://` and set `options.Server.Certificate` through a new `RosenBridgeServerOptions` value, together with `AuthenticateAsync` and optionally `AuthorizeChannel`.
+These options enable cleartext loopback development without identity checks. For secure TCP, select `rbs://`, set `options.Server.Certificate`, and configure upper-layer acceptance through `AcceptSessionAsync` and optionally `AuthorizeChannelAsync`.
 
 `UseTcp` takes an endpoint URI. Configuration can be read from `builder.Configuration` when constructing that URI and the server options. There is one server registration per service collection; repeated `AddRosenBridge` calls reuse its builder. Service registration and transport configuration belong before Build. Channel mappings belong on the built host, before startup. Duplicate paths and mappings after startup are rejected.
 
@@ -87,7 +85,6 @@ var builder = WebApplication.CreateBuilder(args);
 builder.Services
     .AddRosenBridge(options => options.Server = new()
     {
-        AllowAnonymous = true,
         AllowInsecureLoopback = true
     });
 
@@ -135,10 +132,10 @@ The helper uses HTTP/1.1 explicitly and creates a fresh upgraded connection for 
 - Configure HTTPS and the server certificate in Kestrel. The RB adapter does not perform a second TLS handshake and does not use `RosenBridgeServerOptions.Certificate`.
 - The adapter requires an actual server TLS connection feature. Changing the request scheme or forwarding an HTTPS header does not satisfy this check.
 - Cleartext HTTP requires `AllowInsecureLoopback` on the server and client. The server checks both local and remote socket addresses; the client checks resolved destination addresses.
-- RB `AuthenticateAsync` still establishes the management session identity. Channel connections bind through single-use tickets; opening one does not repeat user authentication.
-- `AuthorizeChannel` checks the logical channel path. HTTP endpoint policies, such as `RequireAuthorization()`, are an additional gate on every upgrade; `HttpContext.User` is not automatically imported as the RB session identity. The provided client helper sends RB credentials after upgrade and does not configure HTTP authentication headers.
+- `Credential` is the complete Authorization header value on the initial management upgrade. Optional `AcceptSessionAsync` delegates its validation to the upper layer after upgrade. Channel connections carry only single-use tickets.
+- `AuthorizeChannelAsync` optionally checks the logical path before ticket issuance. `HttpContext.User` is not imported. Blanket `RequireAuthorization()` also gates data upgrades, which intentionally have no Authorization header. See [session acceptance](authentication.md) for the intended flow.
 
-The included web sample explicitly opts into anonymous loopback development. Production applications must configure their authentication callback or deliberately choose anonymous sessions.
+The included web sample explicitly opts into anonymous loopback development. Applications requiring authentication must configure the upper-layer acceptance callback; absence of a callback means no identity checks.
 
 ## Dependency scopes and handlers
 

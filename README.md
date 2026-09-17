@@ -56,7 +56,6 @@ var factory = new RosenBridgeFactory();
 await using var server = factory.CreateServer(new Uri("rb://127.0.0.1:0"), new()
 {
     AllowInsecureLoopback = true,
-    AllowAnonymous = true
 });
 
 server.MapChannel("/echo", async (channel, ct) =>
@@ -139,11 +138,11 @@ Register observers before starting transmission. Choose either `OnData` or `Read
 ## TLS and authentication
 
 - `rbs://` uses the platform's TLS implementation. The server receives a certificate with a private key; the client validates the certificate chain and hostname by default.
-- The `AuthenticateAsync` callback establishes the session identity; `AuthorizeChannel` checks endpoint access.
+- The optional `AcceptSessionAsync` callback delegates admission to the upper layer; `AuthorizeChannelAsync` delegates endpoint access. RB has no identity provider. See [session acceptance](docs/authentication.md).
 - Data connections bind to the session using short-lived, single-use tickets.
 - In this initial version, `rb://` is limited to explicitly enabled loopback development connections.
 
-SASL/OIDC integrations are not yet available. See the [client/server API](docs/client-server-api.md) for configuration and current limitations.
+Authentication schemes such as SASL/OIDC belong to the upper layer. See the [client/server API](docs/client-server-api.md) for configuration and current limitations.
 
 ## Verification
 
@@ -184,6 +183,7 @@ All repository documentation is maintained in English.
 - [Current design](spec.md)
 - [.NET implementation notes](.net-implementation.md)
 - [Client/server API](docs/client-server-api.md)
+- [Authentication and connection state](docs/authentication.md)
 - [Generic Host and ASP.NET Core](docs/hosting.md)
 - [GitHub Packages and releases](docs/publishing.md)
 - [Channel API and experimental framing](docs/channel-api.md)

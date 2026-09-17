@@ -1,6 +1,5 @@
 using System.Collections.Concurrent;
 using System.Net;
-using System.Security.Claims;
 using Stella.RosenBridge.Channels;
 using Stella.RosenBridge.Internal;
 using Stella.RosenBridge.Transport;
@@ -36,8 +35,6 @@ public sealed class RosenBridgeServer : IAsyncDisposable
         ArgumentOutOfRangeException.ThrowIfLessThan(options.MaxSockets, 2);
         if (uri?.Scheme == "rbs" && options.Certificate?.HasPrivateKey != true)
             throw new ArgumentException("TLS server requires a certificate with a private key.", nameof(options));
-        if (options.AuthenticateAsync is null && !options.AllowAnonymous)
-            throw new ArgumentException("Configure authentication or explicitly allow anonymous sessions.", nameof(options));
         _uri = uri;
         _options = options;
         _transport = transport;
@@ -101,7 +98,10 @@ public sealed class RosenBridgeServer : IAsyncDisposable
     /// or an explicit loopback-only development policy before calling. Ownership transfers on entry,
     /// including rejection. The cancellation token covers the entire connection lifetime.
     /// </remarks>
-    public async Task ProcessConnectionAsync(ITransportConnection connection, CancellationToken cancellationToken = default)
+    public Task ProcessConnectionAsync(ITransportConnection connection, CancellationToken cancellationToken = default)
+        => ProcessConnectionAsync(connection, null, cancellationToken);
+
+    public async Task ProcessConnectionAsync(ITransportConnection connection, RosenBridgeConnectionContext? context, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(connection);
         Task worker;
@@ -114,17 +114,17 @@ public sealed class RosenBridgeServer : IAsyncDisposable
                     throw new InvalidOperationException("Start a server configured for externally accepted connections.");
                 cancellationToken.ThrowIfCancellationRequested();
                 if (!_socketSlots.Wait(0)) throw new RosenBridgeException("busy");
-                worker = TrackConnection(connection, cancellationToken);
+                worker = TrackConnection(connection, cancellationToken, context);
             }
         }
         catch { await connection.DisposeAsync().ConfigureAwait(false); throw; }
         await worker.ConfigureAwait(false);
     }
 
-    private Task TrackConnection(ITransportConnection connection, CancellationToken token)
+    private Task TrackConnection(ITransportConnection connection, CancellationToken token, RosenBridgeConnectionContext? context = null)
     {
         var id = Interlocked.Increment(ref _nextWorker);
-        var worker = Task.Run(() => HandleAsync(connection, token));
+        var worker = Task.Run(() => HandleAsync(connection, token, context));
         _workers.TryAdd(id, worker);
         _ = worker.ContinueWith(_ => { _workers.TryRemove(id, out var ignored); },
             CancellationToken.None, TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
@@ -153,7 +153,7 @@ public sealed class RosenBridgeServer : IAsyncDisposable
         }
     }
 
-    private async Task HandleAsync(ITransportConnection connection, CancellationToken cancellationToken)
+    private async Task HandleAsync(ITransportConnection connection, CancellationToken cancellationToken, RosenBridgeConnectionContext? context)
     {
         try
         {
@@ -165,7 +165,7 @@ public sealed class RosenBridgeServer : IAsyncDisposable
             var message = await ManagementWire.ReadAsync(connection.Stream, setup.Token).ConfigureAwait(false);
             switch (message.Type)
             {
-                case "control": await ControlAsync(connection, message, setup.Token, lifetime.Token).ConfigureAwait(false); break;
+                case "control": await ControlAsync(connection, context is null ? message.Credential : context.Credential, setup.Token, lifetime.Token).ConfigureAwait(false); break;
                 case "bind": await BindAsync(connection, message, setup.Token, lifetime.Token).ConfigureAwait(false); break;
                 default: await RejectAsync(connection.Stream, message.Id, "invalid-role", setup.Token).ConfigureAwait(false); break;
             }
@@ -180,17 +180,17 @@ public sealed class RosenBridgeServer : IAsyncDisposable
         }
     }
 
-    private async Task ControlAsync(ITransportConnection connection, ManagementMessage hello, CancellationToken setupToken, CancellationToken lifetimeToken)
+    private async Task ControlAsync(ITransportConnection connection, string? credential, CancellationToken setupToken, CancellationToken lifetimeToken)
     {
-        ClaimsPrincipal? identity = _options.AuthenticateAsync is not null
-            ? await _options.AuthenticateAsync(hello.Credential, setupToken).ConfigureAwait(false)
-            : new ClaimsPrincipal(new ClaimsIdentity());
-        if (identity is null)
+        using var session = new ServerSession(_options, lifetimeToken);
+        if (_options.AcceptSessionAsync is not null &&
+            !await _options.AcceptSessionAsync(session.Context, credential, setupToken).AsTask().WaitAsync(setupToken).ConfigureAwait(false))
         {
             await RejectAsync(connection.Stream, 0, "unauthorized", setupToken).ConfigureAwait(false);
             return;
         }
-        using var session = new ServerSession(identity, _options, lifetimeToken);
+        session.Token.ThrowIfCancellationRequested();
+        setupToken.ThrowIfCancellationRequested();
         if (!_sessions.TryAdd(session.Id, session)) throw new InvalidOperationException("Session identity collision.");
         try
         {
@@ -206,8 +206,14 @@ public sealed class RosenBridgeServer : IAsyncDisposable
                 try { EndpointPolicy.ValidatePath(request.Path!); }
                 catch (ArgumentException) { rejection = "invalid-path"; }
                 if (rejection is null && !_handlers.ContainsKey(request.Path!)) rejection = "not-found";
-                if (rejection is null && _options.AuthorizeChannel?.Invoke(identity, request.Path!) == false)
-                    rejection = "forbidden";
+                if (rejection is null && _options.AuthorizeChannelAsync is not null)
+                {
+                    using var authorization = CancellationTokenSource.CreateLinkedTokenSource(session.Token);
+                    authorization.CancelAfter(_options.HandshakeTimeout);
+                    if (!await _options.AuthorizeChannelAsync(session.Context, request.Path!, authorization.Token).AsTask().WaitAsync(authorization.Token).ConfigureAwait(false))
+                        rejection = "forbidden";
+                    authorization.Token.ThrowIfCancellationRequested();
+                }
                 var reservation = rejection is null ? session.Reserve(request.Id, request.Path!) : null;
                 if (reservation is null)
                     await RejectAsync(connection.Stream, request.Id, rejection ?? "busy", session.Token).ConfigureAwait(false);
@@ -235,7 +241,10 @@ public sealed class RosenBridgeServer : IAsyncDisposable
             await ManagementWire.WriteAsync(connection.Stream,
                 new() { Type = "bound", Id = bind.Id }, bindTimeout.Token).ConfigureAwait(false);
             using var lifetime = CancellationTokenSource.CreateLinkedTokenSource(reservation.Token, lifetimeToken);
-            await using var channel = new Channel(reservation.Path, connection, cancellationToken: lifetime.Token);
+            await using var channel = new Channel(reservation.Path, connection, cancellationToken: lifetime.Token)
+            {
+                Session = session!.Context
+            };
             await _handlers[reservation.Path](channel, lifetime.Token).ConfigureAwait(false);
             await channel.Completion.ConfigureAwait(false);
         }

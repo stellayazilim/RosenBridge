@@ -1,5 +1,7 @@
 # Client/Server — First Working Session Layer
 
+Upper-layer acceptance runs once per management connection. Server handlers can access application-owned state through `channel.Session`; see [authentication and connection state](authentication.md).
+
 This page describes the standalone TCP API. For Generic Host, scoped handlers, and ASP.NET Core HTTP Upgrade on a shared web port, see [hosting.md](hosting.md).
 
 ## Usage
@@ -10,7 +12,6 @@ var factory = new RosenBridgeFactory();
 await using var server = factory.CreateServer(new Uri("rb://127.0.0.1:5500"), new()
 {
     AllowInsecureLoopback = true,
-    AllowAnonymous = true
 });
 
 server.MapChannel("/echo", async (channel, ct) =>
@@ -49,13 +50,13 @@ The sample starts a loopback server/client in one process, sends `hello world` t
 
 - An `rbs://` server requires a Certificate containing a private key. The caller retains certificate ownership and must keep it available until the server closes.
 - By default, the client uses platform certificate/hostname validation. TLS 1.2/1.3 run through the platform. There is no automatic fallback to plaintext TCP.
-- `AuthenticateAsync(credential, ct)` returns a ClaimsPrincipal or null to reject authentication. Data connections do not invoke this callback again.
-- `AuthorizeChannel(identity, path)` can validate endpoint access for every new connection request.
-- An authentication callback is required unless `AllowAnonymous` is explicitly selected. If a callback is configured, a null result does not fall back to anonymous access.
+- Optional `AcceptSessionAsync(session, credential, ct)` returns true to accept the management connection. Data connections bind using tickets.
+- Optional `AuthorizeChannelAsync(session, path, ct)` checks endpoint access before each ticket is issued.
+- Without an acceptance callback, RB accepts sessions without identity checks. Applications requiring authentication must configure their own policy.
 - `rb://` works only when both server and client enable `AllowInsecureLoopback` and the actual IP is a loopback address.
 - The client's CertificateValidation override supports custom validation. The test accepts only the generated test certificate's hash; it does not modify the trust store.
 
-This first version passes a credential to the application's validator in the TLS-protected startup message. SASL mechanisms, OIDC token acquisition/validation, mTLS identity, and authentication expiry are not provided yet. The callback does not automatically implement these security features.
+This first version passes a credential to the application's validator in the TLS-protected startup message. SASL, OIDC token acquisition/validation, identity mapping, and authentication expiry belong to the upper layer. The callback does not automatically implement these security features.
 
 Because of [Schannel's ephemeral-key limitation](https://learn.microsoft.com/en-us/dotnet/core/extensions/sslstream-troubleshooting#handshake-failed-with-ephemeral-keys), the Windows TLS test reloads its test certificate with temporary key storage enabled. The certificate is disposed; no trust-store entry is created. Restricted environments may also block access to Windows TLS APIs.
 
@@ -90,4 +91,4 @@ URI support currently requires a root URI with an explicit port; query/userinfo/
 dotnet run --project tests/Stella.RosenBridge.Transport.SmokeTests
 ```
 
-Client/server tests cover concurrent endpoint connections, early responses, TLS and rejection of incorrect credentials/certificates, endpoint authorization, capacity release, acquisition cancellation, session cleanup, ticket replay/incorrect binding, and expiry. NativeAOT publishing, other operating systems, and independent language implementations have not yet been verified.
+Client/server tests cover concurrent endpoint connections, early responses, TLS and rejection of incorrect credentials/certificates, endpoint authorization, capacity release, acquisition cancellation, session cleanup, ticket replay/incorrect binding, and expiry. The DI and HTTP/HTTPS scenarios also run through the Native AOT executable with `--di-only`. The raw management test helper still uses reflection-based JSON and emits AOT warnings; the complete RB smoke suite is validated under the managed runtime. Other operating systems and independent language implementations have not been verified.

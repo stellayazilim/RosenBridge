@@ -1,5 +1,4 @@
 using System.Net.Security;
-using System.Security.Claims;
 using System.Security.Cryptography.X509Certificates;
 
 namespace Stella.RosenBridge;
@@ -17,9 +16,10 @@ public sealed record RosenBridgeServerOptions
 {
     public X509Certificate2? Certificate { get; init; }
     public bool AllowInsecureLoopback { get; init; }
-    public bool AllowAnonymous { get; init; }
-    public Func<string?, CancellationToken, ValueTask<ClaimsPrincipal?>>? AuthenticateAsync { get; init; }
-    public Func<ClaimsPrincipal, string, bool>? AuthorizeChannel { get; init; }
+    /// <summary>Optional upper-layer acceptance policy. Without it, sessions are accepted without identity checks.</summary>
+    public Func<RosenBridgeSession, string?, CancellationToken, ValueTask<bool>>? AcceptSessionAsync { get; init; }
+    /// <summary>Optional endpoint policy, evaluated before issuing each ticket. No callback means allow registered endpoints.</summary>
+    public Func<RosenBridgeSession, string, CancellationToken, ValueTask<bool>>? AuthorizeChannelAsync { get; init; }
     public int MaxConnectionsPerSession { get; init; } = 8;
     public int MaxSockets { get; init; } = 256;
     public TimeSpan HandshakeTimeout { get; init; } = TimeSpan.FromSeconds(10);

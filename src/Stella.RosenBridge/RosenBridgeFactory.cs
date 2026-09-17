@@ -22,6 +22,16 @@ public sealed class RosenBridgeFactory(ITransportFactory? transport = null)
         RosenBridgeClientOptions? options = null, CancellationToken cancellationToken = default)
         => RosenBridgeClient.ConnectAsync(connect, options ?? new(), cancellationToken);
 
+    /// <summary>Uses separate adapter factories for management and ticket-bound data connections.</summary>
+    public Task<RosenBridgeClient> ConnectUsingAsync(
+        Func<CancellationToken, ValueTask<ITransportConnection>> connectManagement,
+        Func<CancellationToken, ValueTask<ITransportConnection>> connectChannel,
+        RosenBridgeClientOptions? options = null, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(connectManagement);
+        return RosenBridgeClient.ConnectAsync(connectChannel, options ?? new(), cancellationToken, connectManagement);
+    }
+
     public Task<RosenBridgeClient> ConnectAsync(Uri uri, RosenBridgeClientOptions? options = null,
         CancellationToken cancellationToken = default)
         => RosenBridgeClient.ConnectAsync(uri, options ?? new(), _transport, cancellationToken);

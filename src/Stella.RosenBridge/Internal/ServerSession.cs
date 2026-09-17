@@ -1,5 +1,4 @@
 using System.Diagnostics;
-using System.Security.Claims;
 using System.Security.Cryptography;
 using System.Text;
 
@@ -13,15 +12,15 @@ internal sealed class ServerSession : IDisposable
     private readonly CancellationTokenSource _lifetime;
     private bool _closed;
     internal string Id { get; } = Secret();
-    internal ClaimsPrincipal Identity { get; }
+    internal RosenBridgeSession Context { get; }
     internal CancellationToken Token { get; }
 
-    internal ServerSession(ClaimsPrincipal identity, RosenBridgeServerOptions options, CancellationToken token)
+    internal ServerSession(RosenBridgeServerOptions options, CancellationToken token)
     {
-        Identity = identity;
         _options = options;
         _lifetime = CancellationTokenSource.CreateLinkedTokenSource(token);
         Token = _lifetime.Token;
+        Context = new RosenBridgeSession(Id, Token, Dispose);
     }
 
     internal Reservation? Reserve(long id, string path)

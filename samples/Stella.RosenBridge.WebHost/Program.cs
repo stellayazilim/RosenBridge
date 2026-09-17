@@ -9,7 +9,6 @@ builder.WebHost.UseUrls(smoke ? "http://127.0.0.1:0" : "http://127.0.0.1:5080");
 builder.Services
     .AddRosenBridge(options => options.Server = new()
     {
-        AllowAnonymous = true,
         AllowInsecureLoopback = true
     });
 

@@ -38,13 +38,20 @@ public static class RosenBridgeEndpointExtensions
                 context.Response.Headers.Upgrade = UpgradeProtocol;
                 return;
             }
+            var authorization = context.Request.Headers.Authorization;
+            if (authorization.Count > 1 || authorization.ToString().Length > 4096)
+            {
+                context.Response.StatusCode = StatusCodes.Status400BadRequest;
+                return;
+            }
+            var metadata = new RosenBridgeConnectionContext(authorization.Count == 0 ? null : authorization.ToString());
             context.Response.StatusCode = StatusCodes.Status101SwitchingProtocols;
             context.Response.Headers.Upgrade = UpgradeProtocol;
             var stream = await upgrade.UpgradeAsync().ConfigureAwait(false);
             var connection = new HttpStreamConnection(stream,
                 new IPEndPoint(local ?? IPAddress.None, context.Connection.LocalPort),
                 new IPEndPoint(remote ?? IPAddress.None, context.Connection.RemotePort));
-            try { await host.Server.ProcessConnectionAsync(connection, context.RequestAborted).ConfigureAwait(false); }
+            try { await host.Server.ProcessConnectionAsync(connection, metadata, context.RequestAborted).ConfigureAwait(false); }
             catch (RosenBridgeException) { context.Abort(); }
             catch (ObjectDisposedException) { context.Abort(); }
             catch (OperationCanceledException) { context.Abort(); }

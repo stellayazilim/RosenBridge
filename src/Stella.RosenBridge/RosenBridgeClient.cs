@@ -76,14 +76,15 @@ public sealed class RosenBridgeClient : IRosenBridgeClient
     }
 
     internal static async Task<RosenBridgeClient> ConnectAsync(
-        Func<CancellationToken, ValueTask<ITransportConnection>> connect, RosenBridgeClientOptions options, CancellationToken token)
+        Func<CancellationToken, ValueTask<ITransportConnection>> connect, RosenBridgeClientOptions options, CancellationToken token,
+        Func<CancellationToken, ValueTask<ITransportConnection>>? connectManagement = null)
     {
         ArgumentNullException.ThrowIfNull(connect);
         EndpointPolicy.PositiveTimeout(options.OpenTimeout, nameof(options.OpenTimeout));
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(options.MaxPendingRequests);
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(token);
         deadline.CancelAfter(options.OpenTimeout);
-        var connection = await connect(deadline.Token).ConfigureAwait(false);
+        var connection = await (connectManagement ?? connect)(deadline.Token).ConfigureAwait(false);
         try { return await EstablishAsync(connection, connect, options, deadline.Token).ConfigureAwait(false); }
         catch { await connection.DisposeAsync().ConfigureAwait(false); throw; }
     }
